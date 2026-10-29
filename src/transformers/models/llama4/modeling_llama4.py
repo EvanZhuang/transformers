@@ -357,12 +357,11 @@ class Llama4TextAttention(nn.Module):
 
         # Use temperature tuning from https://huggingface.co/papers/2501.19399) to NoROPE layers
         if self.attn_temperature_tuning and not self.use_rope:
-            past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
-            positions = torch.arange(hidden_states.shape[1], device=hidden_states.device) + past_seen_tokens
+            position_ids = kwargs["position_ids"]
             attn_scales = (
-                torch.log1p(torch.floor((positions.float() + 1.0) / self.floor_scale)) * self.attn_scale + 1.0
+                torch.log1p(torch.floor((position_ids.float() + 1.0) / self.floor_scale)) * self.attn_scale + 1.0
             )
-            attn_scales = attn_scales.view((1, input_shape[-1], 1, 1)).expand((*input_shape, 1, 1))  # batch size > 1
+            attn_scales = attn_scales[..., None, None].expand((*input_shape, 1, 1))
             query_states = (query_states * attn_scales).to(query_states.dtype)
 
         query_states = query_states.transpose(1, 2)
@@ -424,6 +423,7 @@ class Llama4TextDecoderLayer(GradientCheckpointingLayer):
             hidden_states=hidden_states,
             position_embeddings=position_embeddings,
             attention_mask=attention_mask,
+            position_ids=position_ids,
             past_key_values=past_key_values,
             use_cache=use_cache,
             **kwargs,

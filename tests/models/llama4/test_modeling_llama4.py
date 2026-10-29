@@ -18,6 +18,7 @@ import unittest
 from transformers import is_torch_available
 from transformers.testing_utils import (
     Expectations,
+    require_torch,
     require_torch_large_accelerator,
     slow,
     torch_device,
@@ -31,8 +32,10 @@ if is_torch_available():
     import torch
 
     from transformers import (
+        Llama4ForCausalLM,
         Llama4ForConditionalGeneration,
         Llama4Processor,
+        Llama4TextConfig,
     )
 
 
@@ -124,3 +127,38 @@ class Llama4IntegrationTest(MemoryCleanupMixin, unittest.TestCase):
             'system\n\nYou are a helpful assistant.user\n\nAre these images identical?assistant\n\nNo, these images are not identical. The first image shows a cow standing on a beach with a blue sky and a white cloud in the background.'
         ]  # fmt: skip
         self.assertEqual(output_text, EXPECTED_TEXTS)
+
+
+@require_torch
+class Llama4TextTemperatureTuningTest(MemoryCleanupMixin, unittest.TestCase):
+    def _model(self):
+        torch.manual_seed(0)
+        # floor_scale=4 so that short padded / packed rows cross a temperature step; layer 3 is the NoPE layer
+        config = Llama4TextConfig(
+            vocab_size=99, hidden_size=32, intermediate_size=37, intermediate_size_mlp=37, num_hidden_layers=4,
+            num_attention_heads=4, num_key_value_heads=2, head_dim=8, moe_layers=[], floor_scale=4,
+            attn_scale=0.1, pad_token_id=0, initializer_range=0.2,
+        )  # fmt: skip
+        return Llama4ForCausalLM(config).to(torch_device).eval()
+
+    def test_nope_temperature_left_padding(self):
+        model = self._model()
+        long = torch.randint(1, 99, (1, 10), device=torch_device)
+        short = torch.randint(1, 99, (1, 6), device=torch_device)
+        input_ids = torch.cat([long, torch.cat([torch.zeros_like(short[:, :4]), short], dim=1)])
+        attention_mask = (input_ids != 0).long()
+        position_ids = (attention_mask.cumsum(-1) - 1).clamp(min=0)
+        with torch.no_grad():
+            padded = model(input_ids, attention_mask=attention_mask, position_ids=position_ids).logits[1, 4:]
+            alone = model(short).logits[0]
+        torch.testing.assert_close(padded, alone, rtol=1e-4, atol=1e-4)
+
+    def test_nope_temperature_packed(self):
+        model = self._model()
+        long = torch.randint(1, 99, (1, 10), device=torch_device)
+        short = torch.randint(1, 99, (1, 6), device=torch_device)
+        position_ids = torch.cat([torch.arange(10), torch.arange(6)]).to(torch_device)[None]
+        with torch.no_grad():
+            packed = model(torch.cat([long, short], 1), position_ids=position_ids, use_cache=False).logits[0, 10:]
+            alone = model(short).logits[0]
+        torch.testing.assert_close(packed, alone, rtol=1e-4, atol=1e-4)
