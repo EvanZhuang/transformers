@@ -917,7 +917,7 @@ class Ernie4_5_VLMoeModel(Qwen2VLModel):
                         current_pos, grid_thw, t_merge_size, spatial_merge_size, device=input_ids.device
                     )
                     llm_pos_ids_list.append(vision_position_ids)
-                    current_pos += max(grid_thw[1], grid_thw[2]) // spatial_merge_size
+                    current_pos = int(vision_position_ids.max()) + 1
             llm_positions = torch.cat(llm_pos_ids_list, dim=1).reshape(3, -1)
             if attention_mask is not None:
                 position_ids[:, batch_idx, attention_mask[batch_idx].bool()] = llm_positions.to(position_ids.device)
