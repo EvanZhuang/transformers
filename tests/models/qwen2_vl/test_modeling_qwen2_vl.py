@@ -330,6 +330,24 @@ class Qwen2VLModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
         self.assertListEqual(list(position_ids.shape), [3, 1, 26])
         self.assertListEqual(position_ids.tolist(), expected_positions.tolist())
 
+        # Long video whose temporal position IDs exceed its spatial grid extent (temporal max 4 > spatial max 2):
+        # trailing text tokens must start at max(vision_position_ids) + 1 = 5, not 1 + max(2, 2) = 3.
+        input_ids = torch.tensor(
+            [[pad_token_id] + [video_token_id] * 16 + [pad_token_id, pad_token_id]], device=torch_device
+        )
+        mm_token_type_ids = torch.tensor([[0] + [2] * 16 + [0, 0]], device=torch_device)
+        video_grid_thw = torch.tensor([[4, 2, 2]], device=torch_device)
+        position_ids, rope_deltas = model.get_rope_index(input_ids, mm_token_type_ids, video_grid_thw=video_grid_thw)
+        expected_positions = torch.tensor(
+            [
+                [[0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 6]],
+                [[0, 1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2, 5, 6]],
+                [[0, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 5, 6]],
+            ]
+        )
+        self.assertListEqual(position_ids.tolist(), expected_positions.tolist())
+        self.assertListEqual(rope_deltas.tolist(), [[-12]])
+
     def attention_mask_padding_matches_padding_free_with_position_ids(
         self, attn_implementation: str, fa_kwargs: bool = False
     ):

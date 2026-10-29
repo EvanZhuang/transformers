@@ -161,6 +161,30 @@ class Ernie4_5_VLMoeModelTest(VLMModelTest, unittest.TestCase):
         }
         return config, inputs_dict
 
+    def test_vision_position_ids(self):
+        config = self.model_tester.get_config()
+        model = Ernie4_5_VLMoeModel(config).to(torch_device)
+        pad_token_id = config.text_config.pad_token_id
+        video_token_id = config.video_token_id
+
+        # Long video whose temporal position IDs exceed its spatial grid extent (temporal max 3 > spatial max 2):
+        # trailing text tokens must start at max(vision_position_ids) + 1 = 4, not 1 + max(2, 2) = 3.
+        input_ids = torch.tensor(
+            [[pad_token_id] + [video_token_id] * 12 + [pad_token_id, pad_token_id]], device=torch_device
+        )
+        mm_token_type_ids = torch.tensor([[0] + [2] * 12 + [0, 0]], device=torch_device)
+        video_grid_thw = torch.tensor([[6, 2, 2]], device=torch_device)
+        position_ids, rope_deltas = model.get_rope_index(input_ids, mm_token_type_ids, video_grid_thw=video_grid_thw)
+        expected_positions = torch.tensor(
+            [
+                [[0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 5]],
+                [[0, 1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2, 4, 5]],
+                [[0, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 4, 5]],
+            ]
+        )
+        self.assertListEqual(position_ids.tolist(), expected_positions.tolist())
+        self.assertListEqual(rope_deltas.tolist(), [[-9]])
+
     @parameterized.expand([("linear",), ("dynamic",), ("yarn",)])
     @unittest.skip("Model cannot scale due to pre-rotations when computing freqs")
     def test_model_rope_scaling_from_config(self, scaling_type):

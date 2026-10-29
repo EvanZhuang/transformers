@@ -308,6 +308,27 @@ class Qwen2_5_VLModelTest(ModelTesterMixin, GenerationTesterMixin, unittest.Test
         self.assertListEqual(list(position_ids.shape), [3, 1, 26])
         self.assertListEqual(position_ids.tolist(), expected_positions.tolist())
 
+        # Long video whose temporal position IDs exceed its spatial grid extent (temporal max 7 > spatial max 2):
+        # trailing text tokens must start at max(vision_position_ids) + 1 = 8, not 1 + max(2, 2) = 3.
+        input_ids = torch.tensor(
+            [[pad_token_id] + [video_token_id] * 12 + [pad_token_id, pad_token_id]], device=torch_device
+        )
+        mm_token_type_ids = torch.tensor([[0] + [2] * 12 + [0, 0]], device=torch_device)
+        video_grid_thw = torch.tensor([[3, 2, 2]], device=torch_device)
+        second_per_grid_ts = torch.tensor([3], device=torch_device)
+        position_ids, rope_deltas = model.get_rope_index(
+            input_ids, mm_token_type_ids, video_grid_thw=video_grid_thw, second_per_grid_ts=second_per_grid_ts
+        )
+        expected_positions = torch.tensor(
+            [
+                [[0, 1, 1, 1, 1, 4, 4, 4, 4, 7, 7, 7, 7, 8, 9]],
+                [[0, 1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2, 8, 9]],
+                [[0, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 8, 9]],
+            ]
+        )
+        self.assertListEqual(position_ids.tolist(), expected_positions.tolist())
+        self.assertListEqual(rope_deltas.tolist(), [[-5]])
+
     def test_video_position_ids_fractional_seconds(self):
         config, _ = self.model_tester.prepare_config_and_inputs_for_common()
         config.vision_config.tokens_per_second = 2
