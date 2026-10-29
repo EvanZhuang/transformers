@@ -363,6 +363,47 @@ class MaskTest(MemoryCleanupMixin, unittest.TestCase):
 
         self.assertTrue((chunked_attention_mask == EXPECTED_CHUNKED_MASK).all())
 
+    def test_chunked_mask_with_packed_sequences(self):
+        position_ids = torch.tensor([[0, 1, 2, 3, 0, 1, 2, 3, 4]])
+        inputs_embeds = torch.empty((1, 9, 8), dtype=torch.float16)
+
+        # fmt: off
+        EXPECTED_CHUNKED_PACKED_MASK = torch.tensor(
+            [[[[ True, False, False, False, False, False, False, False, False],
+               [ True,  True, False, False, False, False, False, False, False],
+               [ True,  True,  True, False, False, False, False, False, False],
+               [False, False, False,  True, False, False, False, False, False],
+               [False, False, False, False,  True, False, False, False, False],
+               [False, False, False, False,  True,  True, False, False, False],
+               [False, False, False, False,  True,  True,  True, False, False],
+               [False, False, False, False, False, False, False,  True, False],
+               [False, False, False, False, False, False, False,  True,  True]]]],
+            dtype=torch.bool,
+        )
+        # fmt: on
+
+        for attn_implementation in ("sdpa", "eager", "flex_attention"):
+            config = LlamaConfig(attention_chunk_size=3, attn_implementation=attn_implementation)
+            mask = create_chunked_causal_mask(
+                config=config,
+                inputs_embeds=inputs_embeds,
+                attention_mask=None,
+                past_key_values=None,
+                position_ids=position_ids,
+            )
+            if attn_implementation == "sdpa":
+                self.assertTrue((mask == EXPECTED_CHUNKED_PACKED_MASK).all())
+            elif attn_implementation == "eager":
+                min_dtype = torch.finfo(torch.float16).min
+                self.assertTrue((mask == torch.where(EXPECTED_CHUNKED_PACKED_MASK, 0.0, min_dtype)).all())
+            else:
+                q_idx = torch.arange(9)[:, None]
+                kv_idx = torch.arange(9)[None, :]
+                b_idx = torch.zeros((1, 1), dtype=torch.long)
+                h_idx = torch.zeros((1, 1), dtype=torch.long)
+                actual = mask.mask_mod(b_idx, h_idx, q_idx, kv_idx)
+                self.assertTrue((actual == EXPECTED_CHUNKED_PACKED_MASK[0, 0]).all())
+
     @staticmethod
     def _run_bidirectional_mask(mask_fn, attn_implementation):
         def run_mask_creation(mask_fn, config, inputs_embeds, encoder_mask, cross_mask, encoder_hidden_states):

@@ -1388,6 +1388,10 @@ def create_chunked_causal_mask(
     else:
         left_padding_tokens = torch.zeros(batch_size, device=device, dtype=int)
     mask_factory_function = chunked_causal_mask_function(chunk_size, left_padding_tokens)
+    # Packed sequences: position ids restart at 0 for each sequence, so the chunks must follow them, not the index
+    if packed_sequence_mask is not None:
+        chunk_ids = (position_ids.expand(batch_size, -1) // chunk_size).to(device)
+        mask_factory_function = and_masks(packed_sequence_mask_function(chunk_ids), causal_mask_function)
     mask_interface = ALL_MASK_ATTENTION_FUNCTIONS[config._attn_implementation]
 
     # Defaulting to using non-vmap based mask creations except when detecting
