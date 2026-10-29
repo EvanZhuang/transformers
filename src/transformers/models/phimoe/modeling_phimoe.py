@@ -87,7 +87,7 @@ class PhimoeRotaryEmbedding(nn.Module):
                 if seq_len > self.config.rope_parameters["original_max_position_embeddings"]
                 else self.config.rope_parameters["short_mscale"]
             )
-        inv_freq, attention_scaling = self.rope_init_fn(self.config)
+        inv_freq, attention_scaling = self.inv_freq, self.attention_scaling
         mscale = attention_scaling if mscale is None else mscale
         freqs = position_ids[..., None].float() * inv_freq.to(device=x.device, dtype=torch.float)
         emb = torch.cat((freqs, freqs), dim=-1)

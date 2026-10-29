@@ -37,9 +37,11 @@ if is_torch_available():
 
     from transformers import (
         AutoTokenizer,
+        PhimoeConfig,
         PhimoeForCausalLM,
         PhimoeModel,
     )
+    from transformers.models.phimoe.modeling_phimoe import PhimoeRotaryEmbedding
 
     end_of_text_token = 32000
 
@@ -109,6 +111,43 @@ class PhimoeModelTest(CausalLMModelTest, unittest.TestCase):
     @unittest.skip("PhiMoE's RoPE has custom parameterization")
     def test_model_rope_scaling_from_config(self, scaling_type):
         pass
+
+    def test_phimoe_longrope_long_factors(self):
+        orig = 64
+        short_factor = [1.0, 1.0, 1.0, 1.25, 1.5, 2.0, 2.5, 2.75]
+        long_factor = [1.0, 1.5, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0]
+        mscale = 1.243163121016122
+        config = PhimoeConfig(
+            hidden_size=64,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            max_position_embeddings=32 * orig,
+            rope_parameters={
+                "rope_type": "longrope",
+                "rope_theta": 10000.0,
+                "original_max_position_embeddings": orig,
+                "short_factor": short_factor,
+                "long_factor": long_factor,
+                "short_mscale": mscale,
+                "long_mscale": mscale,
+            },
+        )
+        rope = PhimoeRotaryEmbedding(config).to(torch_device)
+        x = torch.zeros(1, device=torch_device)
+
+        cos_short, _ = rope(x, torch.arange(orig, device=torch_device)[None])
+        cos_long, sin_long = rope(x, torch.arange(orig + 1, device=torch_device)[None])
+
+        dim = config.hidden_size // config.num_attention_heads
+        inv_freq_long = 1.0 / (
+            torch.tensor(long_factor, dtype=torch.float32, device=torch_device)
+            * 10000.0 ** (torch.arange(0, dim, 2, dtype=torch.float32, device=torch_device) / dim)
+        )
+        freqs_long = torch.arange(orig + 1, dtype=torch.float32, device=torch_device)[:, None] * inv_freq_long
+        emb_long = torch.cat((freqs_long, freqs_long), dim=-1)[None]
+        torch.testing.assert_close(cos_long, emb_long.cos() * mscale)
+        torch.testing.assert_close(sin_long, emb_long.sin() * mscale)
+        self.assertFalse(torch.allclose(cos_long[:, :orig], cos_short))
 
 
 @slow
