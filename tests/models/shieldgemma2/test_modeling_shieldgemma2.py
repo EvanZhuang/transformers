@@ -15,6 +15,7 @@
 
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from transformers import (
     BitsAndBytesConfig,
@@ -131,6 +132,13 @@ class ShieldGemma2ModelTest(VLMModelTest, unittest.TestCase):
     def test_model(self):
         config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
         self.model_tester.create_and_check_model(config, inputs_dict)
+
+    def flash_attn_inference_equivalence(
+        self, attn_implementation: str, padding_side: str, atol: float = 4e-2, rtol: float = 4e-2
+    ):
+        # Flash attention raises on image tokens in `token_type_ids`, so the check runs without them
+        with patch.object(self, "additional_model_inputs", ["pixel_values", "attention_mask"]):
+            super().flash_attn_inference_equivalence(attn_implementation, padding_side, atol=atol, rtol=rtol)
 
     def test_sdpa_can_dispatch_composite_models(self):
         """Override: ShieldGemma2 has double-nesting (wrapper -> Gemma3ForConditionalGeneration -> Gemma3Model)."""

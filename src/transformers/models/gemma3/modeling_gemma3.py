@@ -50,7 +50,7 @@ from ...modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
 from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel, slice_logits_to_keep
 from ...processing_utils import Unpack
 from ...utils import ModelOutput, TransformersKwargs, auto_docstring, can_return_tuple, torch_compilable_check
-from ...utils.generic import merge_with_config_defaults
+from ...utils.generic import is_flash_attention_requested, merge_with_config_defaults
 from ...utils.output_capturing import capture_outputs
 from ..auto import AutoModel
 from .configuration_gemma3 import Gemma3Config, Gemma3TextConfig
@@ -707,6 +707,11 @@ def create_masks_for_vision_model(
     For global (full attention) layers:  OR(causal, blockwise)
     For local (sliding window) layers:  AND(sliding_window, OR(causal, blockwise))
     """
+    if is_flash_attention_requested(config) and (block_sequence_ids >= 0).any():
+        raise ValueError(
+            "Image tokens are not supported with flash attention, which can't represent the bidirectional mask "
+            "over each image. Re-load the model with attn_implementation='sdpa' (or 'eager' / 'flex_attention')."
+        )
     mask_kwargs = {
         "config": config,
         "inputs_embeds": inputs_embeds,

@@ -40,6 +40,7 @@ from ...modeling_rope_utils import (
 from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel, slice_logits_to_keep
 from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, auto_docstring, can_return_tuple, logging
+from ...utils.generic import is_flash_attention_requested
 from ..auto import AutoConfig
 from ..gemma2.configuration_gemma2 import Gemma2Config
 from ..gemma2.modeling_gemma2 import (
@@ -605,6 +606,11 @@ def create_masks_for_vision_model(
     For global (full attention) layers:  OR(causal, blockwise)
     For local (sliding window) layers:  AND(sliding_window, OR(causal, blockwise))
     """
+    if is_flash_attention_requested(config) and (block_sequence_ids >= 0).any():
+        raise ValueError(
+            "Image tokens are not supported with flash attention, which can't represent the bidirectional mask "
+            "over each image. Re-load the model with attn_implementation='sdpa' (or 'eager' / 'flex_attention')."
+        )
     mask_kwargs = {
         "config": config,
         "inputs_embeds": inputs_embeds,

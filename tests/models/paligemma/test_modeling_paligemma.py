@@ -232,6 +232,17 @@ class PaliGemmaForConditionalGenerationModelTest(ModelTesterMixin, GenerationTes
             pixel_values = torch.cat([pixel_values, pixel_values], dim=0)
             _ = model(input_ids=input_ids, pixel_values=pixel_values)
 
+    def test_flash_attention_raises_with_suffix_tokens(self):
+        """
+        Tests that flash attention raises on suffix tokens instead of letting them attend to future tokens.
+        """
+        config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
+        model = PaliGemmaForConditionalGeneration(config).to(torch_device).eval()
+        model.config.text_config._attn_implementation = "flash_attention_2"
+        inputs_dict["token_type_ids"][:, -4:] = 1  # suffix tokens attend causally
+        with self.assertRaisesRegex(ValueError, "can't represent the causal mask"):
+            model(**inputs_dict)
+
     @pytest.mark.xfail(reason="This architecture seems to not compute gradients for some layer.")
     def test_training_gradient_checkpointing(self):
         super().test_training_gradient_checkpointing()

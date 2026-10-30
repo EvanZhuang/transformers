@@ -35,6 +35,7 @@ from ...utils import (
     logging,
     torch_compilable_check,
 )
+from ...utils.generic import is_flash_attention_requested
 from ..auto import AutoModel
 from .configuration_paligemma import PaliGemmaConfig
 
@@ -254,6 +255,12 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
         }
         is_first_iteration = past_key_values is None or not past_key_values.is_initialized or pixel_values is not None
         if token_type_ids is not None and is_first_iteration:
+            if is_flash_attention_requested(self.config.text_config) and (token_type_ids == 1).any():
+                raise ValueError(
+                    "Suffix tokens (`token_type_ids == 1`) are not supported with flash attention, which can't "
+                    "represent the causal mask over the suffix. Re-load the model with attn_implementation='eager' "
+                    "(or 'flex_attention')."
+                )
             # Can attend bidirectionally in prefix and only causally in suffix
             mask_kwargs["block_sequence_ids"] = torch.where(token_type_ids == 0, 0, -1)
 

@@ -16,6 +16,7 @@
 import logging
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import pytest
 from parameterized import parameterized
@@ -337,6 +338,28 @@ class Gemma3Vision2TextModelTest(VLMModelTest, unittest.TestCase):
 
                 # We expect a non-causal mask only within same image and no looking ahead to the future
                 self.assertTrue((attention[..., :4, 7:10] == 0).all().item())
+
+    def flash_attn_inference_equivalence(
+        self, attn_implementation: str, padding_side: str, atol: float = 4e-2, rtol: float = 4e-2
+    ):
+        # Flash attention raises on image tokens in `token_type_ids`, so the check runs without them
+        with patch.object(self, "additional_model_inputs", []):
+            super().flash_attn_inference_equivalence(attn_implementation, padding_side, atol=atol, rtol=rtol)
+
+    def _test_attention_implementation(self, attn_implementation):
+        if attn_implementation.startswith("flash_attention"):
+            self.skipTest("Flash attention raises on image tokens in `token_type_ids`")
+        super()._test_attention_implementation(attn_implementation)
+
+    def test_flash_attention_raises_with_image_tokens(self):
+        """
+        Tests that flash attention raises on image tokens instead of silently dropping their bidirectional mask.
+        """
+        config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
+        model = Gemma3ForConditionalGeneration(config).to(torch_device).eval()
+        model.config.text_config._attn_implementation = "flash_attention_2"
+        with self.assertRaisesRegex(ValueError, "can't represent the bidirectional mask"):
+            model(**inputs_dict)
 
     @pytest.mark.xfail(reason="This architecture seems to not compute gradients for some layer.")
     def test_training_gradient_checkpointing(self):
@@ -761,40 +784,6 @@ class Gemma3IntegrationTest(unittest.TestCase):
                 ("cuda", 8): ['Write a poem about Machine Learning.\n\n---\n\nThe data flows, a river deep,\nWith patterns hidden, secrets sleep.\nA neural net, a watchful eye,\nLearning'],
                 ("rocm", 9): ['Write a poem about Machine Learning.\n\n---\n\nThe data flows, a river deep,\nWith patterns hidden, secrets sleep.\nA neural net, a watchful eye,\nLearning'],
                 ("tpu", None): ['Write a poem about Machine Learning.\n\n---\n\nThe data flows, a silent stream,\nInto the neural net, a waking dream.\nAlgorithms hum, a coded grace,\n'],
-            }
-        )  # fmt: skip
-        EXPECTED_TEXT = EXPECTED_TEXTS.get_expectation()
-        self.assertEqual(output_text, EXPECTED_TEXT)
-
-    # TODO: raushan FA2 generates gibberish for no reason, check later
-    @require_flash_attn
-    @require_torch_large_accelerator
-    @pytest.mark.flash_attn_test
-    def test_model_4b_flash_attn(self):
-        model_id = "google/gemma-3-4b-it"
-
-        model = Gemma3ForConditionalGeneration.from_pretrained(
-            model_id, dtype=torch.bfloat16, attn_implementation="flash_attention_2"
-        ).to(torch_device)
-
-        inputs = self.processor.apply_chat_template(
-            self.messages,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-            add_generation_prompt=True,
-        ).to(torch_device)
-
-        output = model.generate(**inputs, max_new_tokens=30, do_sample=False)
-        output_text = self.processor.batch_decode(output, skip_special_tokens=True)
-
-        EXPECTED_TEXTS = Expectations(
-            {
-                ("xpu", 3): ['user\nYou are a helpful assistant.\n\n\n\n\n\nWhat is shown in this image?\nmodel\nThe image shows a brown and white cow standing on a sandy beach with turquoise water and a distant island in the background. It looks like a sunny day'],
-                ("cuda", 7): [],
-                ("cuda", 8): ['user\nYou are a helpful assistant.\n\n\n\n\n\nWhat is shown in this image?\nmodel\nThe image shows a brown and white cow standing on a sandy beach with turquoise water and a distant island in the background. It looks like a sunny day'],
-                ("rocm", (9, 4)): ['user\nYou are a helpful assistant.\n\n\n\n\n\nWhat is shown in this image?\nmodel\nCertainly! \n\nThe image shows a brown and white cow standing on a sandy beach next to a turquoise ocean. There are some clouds in the blue'],
-                ("rocm", (9, 5)): ['user\nYou are a helpful assistant.\n\n\n\n\n\nWhat is shown in this image?\nmodel\nThe image shows a brown and white cow standing on a sandy beach with a turquoise ocean and a distant island in the background. It looks like a sunny'],
             }
         )  # fmt: skip
         EXPECTED_TEXT = EXPECTED_TEXTS.get_expectation()
