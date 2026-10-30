@@ -376,7 +376,7 @@ class MambaMixer(nn.Module):
         projected_states = self.in_proj(hidden_states).transpose(1, 2)
 
         A = -torch.exp(self.A_log.float())
-        if self.training and cache_params is None:
+        if self.training and cache_params is None and attention_mask is None:
             fused_output = mamba_inner_fn(
                 projected_states,
                 self.conv1d.weight,

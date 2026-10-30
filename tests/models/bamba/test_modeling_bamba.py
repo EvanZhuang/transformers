@@ -356,6 +356,22 @@ class BambaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMixi
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_mamba_chunked_prefill(*config_and_inputs, device=torch_device)
 
+    def test_left_padding_in_training_mode(self):
+        # Training without a cache may take the fused kernel, which must ignore left padding like the eval path does
+        config, input_ids, *_ = self.model_tester.prepare_config_and_inputs()
+        model = BambaModel(config).to(torch_device).train()
+        for name, param in model.named_parameters():
+            if name.endswith("conv1d.bias"):
+                torch.nn.init.normal_(param)  # zero at init, which would hide the effect of the pads
+        input_ids = input_ids[:1].to(torch_device)
+        padding = torch.full((1, 32), 7, dtype=input_ids.dtype, device=torch_device)
+        attention_mask = torch.cat([torch.zeros_like(padding), torch.ones_like(input_ids)], dim=1)
+
+        with torch.no_grad():
+            out = model(input_ids, use_cache=False).last_hidden_state
+            out_padded = model(torch.cat([padding, input_ids], dim=1), attention_mask=attention_mask, use_cache=False)
+        torch.testing.assert_close(out_padded.last_hidden_state[:, 32:], out, rtol=1e-3, atol=1e-3)
+
     def test_attention_outputs(self):
         r"""
         Overriding the test_attention_outputs test as the Bamba model outputs attention only for its attention layers
